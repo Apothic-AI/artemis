@@ -99,8 +99,22 @@ def parse_user_list(output: str) -> list[tuple[int, str, int, bool]]:
 
 def parse_current_user(output: str) -> int | None:
     """Parses ``am get-current-user`` output down to the integer user id."""
-    match = re.search(r"\d+", output or "")
+    text = (output or "").strip()
+    if not text or "unknown command" in text.lower() or text.lower().startswith("error"):
+        return None
+    match = re.search(r"\d+", text)
     return int(match.group(0)) if match else None
+
+
+def parse_current_user_dumpsys(output: str) -> int | None:
+    """Parses ``dumpsys activity`` or ``dumpsys user`` for the current user id."""
+    match = re.search(r"\bmCurrentUser(?:Id)?\s*=\s*(\d+)", output or "")
+    if match:
+        return int(match.group(1))
+    match = re.search(r'User\s+"[^"]*"\s*\(\s*id\s*=\s*(\d+)[^)]*\)\s*\(current\)', output or "")
+    if match:
+        return int(match.group(1))
+    return None
 
 
 def scope_command_for_user(command: str, user_id: int | None) -> str:
@@ -581,13 +595,24 @@ class AndroidAdbDriver(BaseDeviceDriver):
         return users
 
     async def get_current_user(self) -> int:
-        """The foreground Android user id (``am get-current-user``)."""
+        """The foreground Android user id (``am get-current-user`` with dumpsys fallback)."""
         output = await asyncio.wait_for(
             asyncio.to_thread(self.device.shell, "am get-current-user"), timeout=15.0
         )
         current = parse_current_user(str(output))
         if current is None:
-            raise RuntimeError(f"Could not parse 'am get-current-user' output: {str(output)[:200]}")
+            # Fallback for older Android releases (e.g. Android 6/7) without 'am get-current-user'
+            try:
+                fallback = await asyncio.wait_for(
+                    asyncio.to_thread(self.device.shell, "dumpsys activity"), timeout=15.0
+                )
+                current = parse_current_user_dumpsys(str(fallback))
+            except Exception as exc:
+                logger.debug(f"dumpsys activity fallback for current user failed: {exc}")
+        if current is None:
+            raise RuntimeError(
+                f"Could not parse 'am get-current-user' or dumpsys output: {str(output)[:200]}"
+            )
         return current
 
     async def switch_user(self, user_id: int) -> bool:
