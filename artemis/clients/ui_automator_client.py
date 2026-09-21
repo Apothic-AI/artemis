@@ -464,6 +464,23 @@ class UIAutomatorClient:
             self.stop_server(device)
         logger.info("UIAutomator2 client disconnected")
 
+    def handle_user_switch(self, user_id: int | None = None) -> None:
+        """Restart the instrumentation for a newly foregrounded Android profile.
+
+        UiAutomation connections do not follow a user switch: the on-device
+        server keeps serving the previous profile's windows (or dies with it),
+        so the cached connection is dropped and the server stopped; the next
+        call re-connects and re-initializes it inside the new profile.
+        """
+        device = self._device
+        self._device = None
+        if device is not None:
+            self.stop_server(device)
+        logger.info(
+            f"UIAutomator2 client reset for the user switch on {self._device_id}"
+            + (f" (now serving profile {user_id})" if user_id is not None else "")
+        )
+
     def stop_server(self, device: "Device | None" = None) -> bool:
         """Kill uiautomator2's on-device server (see :meth:`disconnect`)."""
         device = device or self._device

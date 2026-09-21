@@ -96,6 +96,8 @@ NODE_VISIBILITY: dict[str, NodeVisibility] = {
             # one-turn CLOSED notice in the observation tail).
             "open_incident",
             "last_closed_incident",
+            # The foreground Android profile the operator acts within (multi-user).
+            "current_user_id",
         },
         writes={
             "structured_decisions",
@@ -141,6 +143,8 @@ NODE_VISIBILITY: dict[str, NodeVisibility] = {
             "operator_native_thinking",
             "indexed_points",
             "indexed_elements",
+            # The foreground Android profile the turn executes within.
+            "current_user_id",
         },
         writes={
             "open_incident",
@@ -151,6 +155,8 @@ NODE_VISIBILITY: dict[str, NodeVisibility] = {
             "latest_screenshot",
             "indexed_points",
             "indexed_elements",
+            # Stamped by a successful manage_user switch (multi-user devices).
+            "current_user_id",
         },
     ),
     "summarizer": _vis(

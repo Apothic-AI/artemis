@@ -151,6 +151,19 @@ def format_action_clean(action_obj) -> str:
         if intent == "stop":
             return f"Stopped app '{app_name}'"
         return f"Managed app '{app_name}' (action: {intent})"
+    elif act_type == "manage_user":
+        intent = action_obj.get("intent") or action_obj.get("user_action")
+        user_id = action_obj.get("user_id")
+        if intent == "switch":
+            user_name = action_obj.get("user_name")
+            profile = f"profile '{user_name}' (ID {user_id})" if user_name else f"ID {user_id}"
+            return f"Switched device user to {profile}"
+        if intent == "list":
+            return "Listed device user profiles"
+        if intent == "current":
+            suffix = f" (ID {user_id})" if user_id is not None else ""
+            return f"Checked current device user{suffix}"
+        return f"Managed device user (action: {intent})"
     elif act_type == "wait_for_delay":
         delay_ms = (
             action_obj.get("delay_ms") or action_obj.get("time_in_ms") or action_obj.get("duration")

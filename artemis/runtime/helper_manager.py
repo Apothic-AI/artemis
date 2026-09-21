@@ -209,6 +209,10 @@ class HelperSession:
     version_code: int | None
     version_name: str
     owns_forward: bool
+    #: Android user profile the tunneled service serves. Accessibility services
+    #: run only in the foreground user's context, so a session is valid for one
+    #: profile; a user switch invalidates it.
+    user_id: int = 0
     attached_at: float = field(default_factory=time.time)
     #: Session token the helper expects in ``X-Artemis-Token``; None for pre-token helpers.
     token: str | None = field(default=None, repr=False)
@@ -258,6 +262,27 @@ def _default_ping(local_port: int, timeout: float = 2.0) -> dict[str, Any] | Non
     if not isinstance(data, dict) or not data.get("success"):
         return None
     return data
+
+
+def _settings_argv(
+    operation: str, key: str, user_id: int | None = None, value: str | None = None
+) -> list[str]:
+    """``shell settings [--user <id>] get/put secure <key> [value]`` argv.
+
+    Secure settings are per-user databases (each profile keeps its own
+    ``enabled_accessibility_services``), so every query and write is scoped to
+    the profile it targets. Android's SettingsCmd expects options like ``--user``
+    before the verb (e.g. ``settings --user 10 get secure ...``). ``user_id=0``/``None``
+    emits no flag: user 0 is the shell's default, and the flag-free form keeps
+    the historical commands.
+    """
+    argv = ["shell", "settings"]
+    if user_id is not None and user_id != 0:
+        argv += ["--user", str(int(user_id))]
+    argv += [operation, "secure", key]
+    if value is not None:
+        argv.append(value)
+    return argv
 
 
 class AccessibilityHelperManager:
@@ -338,26 +363,20 @@ class AccessibilityHelperManager:
         self._token = token
         return token
 
-    def push_token(self, serial: str) -> bool:
+    def push_token(self, serial: str, user_id: int | None = None) -> bool:
         """Deliver the host token to the helper on ``serial`` (idempotent).
 
         The broadcast is explicit (component named) so it reaches the manifest
         receiver on every Android version, and it is sent by the adb shell user,
-        the only sender the receiver's permission guard admits.
+        the only sender the receiver's permission guard admits. ``user_id``
+        scopes the broadcast to that profile so the token lands in the helper
+        instance running in the foreground user's context.
         """
-        result = self._adb(
-            serial,
-            "shell",
-            "am",
-            "broadcast",
-            "-n",
-            TOKEN_RECEIVER,
-            "-a",
-            TOKEN_ACTION,
-            "--es",
-            "token",
-            self.host_token(),
-        )
+        argv = ["shell", "am", "broadcast"]
+        if user_id is not None and user_id != 0:
+            argv += ["--user", str(int(user_id))]
+        argv += ["-n", TOKEN_RECEIVER, "-a", TOKEN_ACTION, "--es", "token", self.host_token()]
+        result = self._adb(serial, *argv)
         output = f"{result.stdout or ''}\n{result.stderr or ''}"
         ok = result.returncode == 0 and "Broadcast completed" in output
         if not ok:
@@ -403,9 +422,9 @@ class AccessibilityHelperManager:
             return None
         return int(match.group(1))
 
-    def is_service_enabled(self, serial: str) -> bool:
+    def is_service_enabled(self, serial: str, user_id: int = 0) -> bool:
         result = self._adb(
-            serial, "shell", "settings", "get", "secure", "enabled_accessibility_services"
+            serial, *_settings_argv("get", "enabled_accessibility_services", user_id)
         )
         enabled = (result.stdout or "").strip()
         return SERVICE_NAME in enabled.split(":") if enabled and enabled != "null" else False
@@ -587,48 +606,47 @@ class AccessibilityHelperManager:
         finally:
             path.unlink(missing_ok=True)
 
-    def _enable_service(self, serial: str) -> bool:
-        """Add the service to secure settings and confirm the write stuck.
+    def _enable_service(self, serial: str, user_id: int = 0) -> bool:
+        """Add the service to the user's secure settings and confirm the write stuck.
 
         Right after ``pm install`` (and right after boot) AccessibilityManager
         may still not resolve the component and prunes it from the setting
         again, so a single write followed by an immediate read can report
         success for a value that is gone a moment later. Re-read after a short
-        delay and retry a few times before giving up.
+        delay and retry a few times before giving up. Secure settings are
+        per-user, so every read and write is scoped to ``user_id``.
         """
         for attempt in range(_ENABLE_ATTEMPTS):
             result = self._adb(
-                serial, "shell", "settings", "get", "secure", "enabled_accessibility_services"
+                serial, *_settings_argv("get", "enabled_accessibility_services", user_id)
             )
             current = (result.stdout or "").strip()
             services = [s for s in current.split(":") if s and s != "null"] if current else []
             if SERVICE_NAME in services:
                 # Already enabled (the common, up-to-date case): no settle wait.
                 self._adb(
-                    serial, "shell", "settings", "put", "secure", "accessibility_enabled", "1"
+                    serial,
+                    *_settings_argv("put", "accessibility_enabled", user_id, value="1"),
                 )
                 return True
             services.append(SERVICE_NAME)
             self._adb(
                 serial,
-                "shell",
-                "settings",
-                "put",
-                "secure",
-                "enabled_accessibility_services",
-                ":".join(services),
+                *_settings_argv(
+                    "put", "enabled_accessibility_services", user_id, value=":".join(services)
+                ),
             )
-            self._adb(serial, "shell", "settings", "put", "secure", "accessibility_enabled", "1")
+            self._adb(serial, *_settings_argv("put", "accessibility_enabled", user_id, value="1"))
             self._sleep(_ENABLE_SETTLE_SECONDS)
-            if self.is_service_enabled(serial):
+            if self.is_service_enabled(serial, user_id):
                 return True
             logger.debug(
-                f"Accessibility service setting on {serial} did not stick "
+                f"Accessibility service setting on {serial} (user {user_id}) did not stick "
                 f"(attempt {attempt + 1}/{_ENABLE_ATTEMPTS}); retrying."
             )
         return False
 
-    def _revive_service(self, serial: str) -> None:
+    def _revive_service(self, serial: str, user_id: int = 0) -> None:
         """Make AccessibilityManager rebind a service that stopped answering.
 
         A force-stopped (or ROM-killed) accessibility service stays dead even
@@ -637,31 +655,30 @@ class AccessibilityHelperManager:
         ends up exactly as before, so this is a repair, not provisioning.
         """
         result = self._adb(
-            serial, "shell", "settings", "get", "secure", "enabled_accessibility_services"
+            serial, *_settings_argv("get", "enabled_accessibility_services", user_id)
         )
         current = (result.stdout or "").strip()
         others = [s for s in current.split(":") if s and s != "null" and s != SERVICE_NAME]
         self._adb(
             serial,
-            "shell",
-            "settings",
-            "put",
-            "secure",
-            "enabled_accessibility_services",
-            ":".join(others) if others else "null",
+            *_settings_argv(
+                "put", "enabled_accessibility_services", user_id, value=":".join(others)
+            )
+            if others
+            else _settings_argv("put", "enabled_accessibility_services", user_id, value="null"),
         )
         self._sleep(_REVIVE_SETTLE_SECONDS)
         self._adb(
             serial,
-            "shell",
-            "settings",
-            "put",
-            "secure",
-            "enabled_accessibility_services",
-            ":".join([*others, SERVICE_NAME]),
+            *_settings_argv(
+                "put",
+                "enabled_accessibility_services",
+                user_id,
+                value=":".join([*others, SERVICE_NAME]),
+            ),
         )
-        self._adb(serial, "shell", "settings", "put", "secure", "accessibility_enabled", "1")
-        logger.info(f"Re-bound the accessibility helper service on {serial}.")
+        self._adb(serial, *_settings_argv("put", "accessibility_enabled", user_id, value="1"))
+        logger.info(f"Re-bound the accessibility helper service on {serial} (user {user_id}).")
 
     def provision(
         self,
@@ -670,6 +687,7 @@ class AccessibilityHelperManager:
         force: bool = False,
         on_event: ProvisionEvent | None = None,
         install: bool = True,
+        user_id: int = 0,
     ) -> ProvisionResult:
         """Install or upgrade the helper to the bundled version and enable the service.
 
@@ -678,7 +696,8 @@ class AccessibilityHelperManager:
         ``on_event`` is told ``installing`` / ``upgrading`` before the install.
         ``install=False`` (auto-install disabled) never runs ``adb install``: a
         missing helper is reported as a failure that names the manual command,
-        an outdated one is used as is.
+        an outdated one is used as is. ``user_id`` scopes the service enabling
+        (secure settings) to that Android profile.
         """
         bundled = self.bundled
 
@@ -765,7 +784,7 @@ class AccessibilityHelperManager:
                         )
                     action = "installed" if installed is None else "upgraded"
                     installed = self.installed_version(serial)
-            enabled = self._enable_service(serial)
+            enabled = self._enable_service(serial, user_id)
             if not enabled:
                 # Secure settings were rejected (OEM ROM or restricted settings):
                 # open the Accessibility settings screen so the person only has to
@@ -850,6 +869,7 @@ class AccessibilityHelperManager:
         provision: bool = True,
         on_event: ProvisionEvent | None = None,
         revive: bool | None = None,
+        user_id: int = 0,
     ) -> HelperSession:
         """Return a live session for ``serial``, building the tunnel when needed.
 
@@ -859,6 +879,9 @@ class AccessibilityHelperManager:
         ``revive`` (defaults to ``provision``) allows re-binding a dead but
         enabled service; :meth:`reattach` always does, because the caller
         already owned a working session on this device.
+        ``user_id`` is the Android profile the session must serve: accessibility
+        services run only in the foreground user's context, so a session built
+        for a different profile is stale even when its tunnel still pings.
         """
         if revive is None:
             revive = provision
@@ -866,16 +889,23 @@ class AccessibilityHelperManager:
             transport = self.transport_id(serial)
             existing = self.session(serial)
             if existing is not None:
-                if existing.transport_id == transport and self.ping(existing.local_port):
+                if (
+                    existing.transport_id == transport
+                    and existing.user_id == user_id
+                    and self.ping(existing.local_port)
+                ):
                     return existing
                 logger.info(
                     f"Accessibility helper session on {serial} is stale "
-                    f"(transport {existing.transport_id} -> {transport}); rebuilding the tunnel."
+                    f"(transport {existing.transport_id} -> {transport}, user "
+                    f"{existing.user_id} -> {user_id}); rebuilding the tunnel."
                 )
                 self._drop_session(serial, remove_forward=existing.transport_id == transport)
 
             if provision:
-                result = self.provision(serial, on_event=on_event, install=self._auto_install())
+                result = self.provision(
+                    serial, on_event=on_event, install=self._auto_install(), user_id=user_id
+                )
                 if not result.ok:
                     raise HelperUnavailable(result.error or "Provisioning the helper failed.")
 
@@ -902,10 +932,10 @@ class AccessibilityHelperManager:
                     # Installed and enabled but silent: the service was killed
                     # (force-stop, ROM task killer) or has not bound yet after an
                     # upgrade. Re-binding it is cheap and needs no install.
-                    if self.is_service_enabled(serial):
-                        self._revive_service(serial)
+                    if self.is_service_enabled(serial, user_id):
+                        self._revive_service(serial, user_id)
                     else:
-                        self._enable_service(serial)
+                        self._enable_service(serial, user_id)
                     info = self._wait_for_ping(local_port, _PING_ATTEMPTS_AFTER_PROVISION)
             if info is None:
                 if owns_forward:
@@ -952,7 +982,7 @@ class AccessibilityHelperManager:
             token: str | None = None
             if info.get("auth_required", protocol >= 2):
                 token = self.host_token()
-                self.push_token(serial)
+                self.push_token(serial, user_id)
 
             version = info.get("version_code")
             session = HelperSession(
@@ -962,6 +992,7 @@ class AccessibilityHelperManager:
                 version_code=int(version) if isinstance(version, (int, float)) else None,
                 version_name=str(info.get("version_name") or ""),
                 owns_forward=owns_forward,
+                user_id=user_id,
                 token=token,
                 protocol_version=protocol,
             )
@@ -969,18 +1000,32 @@ class AccessibilityHelperManager:
                 self._sessions[serial] = session
             logger.info(
                 f"Accessibility helper attached on {serial}: 127.0.0.1:{local_port} "
-                f"(v{session.version_name or '?'}, protocol {protocol}, transport {transport})"
+                f"(v{session.version_name or '?'}, protocol {protocol}, transport {transport}, "
+                f"user {user_id})"
             )
             return session
 
-    def reattach(self, serial: str) -> HelperSession:
+    def switch_session(self, serial: str, new_user_id: int) -> HelperSession:
+        """Rebuild the helper session for a newly foregrounded Android user.
+
+        Android kills the previous user's accessibility service at a user
+        switch, so the old session's tunnel is stale by definition: it is
+        dropped (forward included) and the service is provisioned and re-bound
+        inside the new user's context, then re-attached. The full task-path
+        attach semantics apply (provision, revive, token push).
+        """
+        with self._device_lock(serial):
+            self._drop_session(serial, remove_forward=True)
+            return self.attach(serial, provision=True, revive=True, user_id=new_user_id)
+
+    def reattach(self, serial: str, user_id: int = 0) -> HelperSession:
         """Rebuild the tunnel after a request failed; never installs anything.
 
         The caller had a working session, so a dead service is re-bound.
         """
         with self._device_lock(serial):
             self._drop_session(serial, remove_forward=True)
-            return self.attach(serial, provision=False, revive=True)
+            return self.attach(serial, provision=False, revive=True, user_id=user_id)
 
     def detach(self, serial: str) -> None:
         with self._device_lock(serial):

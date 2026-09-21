@@ -271,6 +271,8 @@ LIST_NOTES_TOOL = ToolDeclaration(
 
 MANAGE_APP_TOOL = tool_declaration("manage_app")
 
+MANAGE_USER_TOOL = tool_declaration("manage_user")
+
 WAIT_FOR_DELAY_TOOL = tool_declaration("wait_for_delay")
 
 REPORT_TASK_STATUS_TOOL = ToolDeclaration(
@@ -328,5 +330,6 @@ VALIDATOR_TOOLS_DECLARATION: list[ToolDeclaration] = [
     READ_NOTE_TOOL,
     LIST_NOTES_TOOL,
     MANAGE_APP_TOOL,
+    MANAGE_USER_TOOL,
     WAIT_FOR_DELAY_TOOL,
 ]

@@ -351,6 +351,37 @@ def _step_offset_label(step: dict, session_start: float | None) -> str:
     return "T+??:??"
 
 
+#: History marker for a step that switched the foreground Android profile. A
+#: user switch is an explicit context boundary: the wallpaper, launcher and app
+#: list legitimately change across it, so the Checker reads the visual
+#: discontinuity as the transition itself rather than as an unintended
+#: discrepancy.
+USER_SWITCH_BOUNDARY_MARKER = "[user switch boundary]"
+
+
+def is_user_switch_step(step: dict) -> bool:
+    """Whether the step's recorded action switched the device's foreground user.
+
+    Handles both record shapes: Flash's verbatim tool call
+    (``args`` sub-dict carrying the tool arguments) and the Pro action item
+    (``intent`` holding the manage_user sub-action).
+    """
+    action = step.get("action_taken") if isinstance(step, dict) else None
+    if isinstance(action, str):
+        try:
+            action = json.loads(action)
+        except (TypeError, ValueError):
+            action = None
+    if isinstance(action, list):
+        action = action[0] if action else None
+    if not isinstance(action, dict):
+        return False
+    if str(action.get("action") or action.get("name") or "").lower() != "manage_user":
+        return False
+    args = action.get("args") if isinstance(action.get("args"), dict) else action
+    return str(args.get("intent") or args.get("action") or "").lower() == "switch"
+
+
 def _format_history(ctx: ArtemisContext, limit: int = 60, steps: list[dict] | None = None) -> str:
     if steps is None:
         steps = _load_steps(ctx)
@@ -377,7 +408,8 @@ def _format_history(ctx: ArtemisContext, limit: int = 60, steps: list[dict] | No
             except Exception:
                 action_str = str(action)[:160]
         label = _step_offset_label(s, session_start)
-        lines.append(f"- Step {num} ({label}): {summary or action_str}".rstrip())
+        boundary = f" {USER_SWITCH_BOUNDARY_MARKER}" if is_user_switch_step(s) else ""
+        lines.append(f"- Step {num} ({label}): {summary or action_str}".rstrip() + boundary)
     return "\n".join(lines) or "No execution history available."
 
 

@@ -18,6 +18,7 @@ import asyncio
 import base64
 from io import BytesIO
 from pathlib import Path
+import re
 from typing import Any, Literal
 
 from adbutils import AdbClient, AdbDevice
@@ -26,13 +27,104 @@ from artemis.clients.ui_automator_client import (
     _parse_hierarchy_xml_to_elements,
 )
 from artemis.config.paths import get_temp_dir
-from artemis.drivers.base import BaseDeviceDriver, KeyCode, ScreenData, SwipeDirection
+from artemis.drivers.base import (
+    BaseDeviceDriver,
+    KeyCode,
+    ScreenData,
+    SwipeDirection,
+    AndroidUserInfo,
+)
 from artemis.toolchain import find_ffmpeg, find_scrcpy
 from artemis.utils.video import build_scrcpy_record_command
 from artemis.utils.ui_filter import filter_ui_hierarchy
 from artemis.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+#: Shell commands whose leading ``--user`` scope the actuator's per-user shell
+#: plumbing knows how to inject (best effort; other commands run as the shell user).
+_USER_SCOPED_COMMANDS = frozenset({"am", "settings", "cmd", "content"})
+
+#: Output markers of a firmware refusing ``am switch-user`` (OEM restriction or a
+#: missing permission, both surfacing as a SecurityException from ``am``).
+_SWITCH_RESTRICTION_MARKERS = (
+    "securityexception",
+    "java.lang.securityexception",
+    "requires .* permission",
+    "not allowed to switch",
+    "cannot switch user",
+    "switching users? (is )?not (supported|allowed|permitted)",
+)
+
+_USER_INFO_RE = r"UserInfo\{(\d+):(.*):(\d+)\}"
+
+
+class UserSwitchRestrictedError(RuntimeError):
+    """The firmware refused ``am switch-user`` (OEM restriction / SecurityException).
+
+    Carries the raw shell output so diagnostics can quote the ROM's own words.
+    """
+
+    def __init__(self, output: str):
+        self.output = output
+        super().__init__(
+            "Device firmware restricted automated user switching "
+            f"(SecurityException): {output.strip()[-300:]}"
+        )
+
+
+def parse_user_list(output: str) -> list[tuple[int, str, int, bool]]:
+    """Parses ``pm list users`` / ``dumpsys user`` ``UserInfo{...}`` lines.
+
+    Returns ``(user_id, name, flags, is_running)`` tuples in order of appearance.
+    A trailing ``running`` marker on the line sets ``is_running``; the current
+    user is not known from this output alone.
+    """
+    users: list[tuple[int, str, int, bool]] = []
+    for line in output.splitlines():
+        match = re.search(_USER_INFO_RE, line)
+        if not match:
+            continue
+        trailing = line[match.end() :].lower()
+        users.append(
+            (
+                int(match.group(1)),
+                match.group(2).strip(),
+                int(match.group(3)),
+                "running" in trailing,
+            )
+        )
+    return users
+
+
+def parse_current_user(output: str) -> int | None:
+    """Parses ``am get-current-user`` output down to the integer user id."""
+    match = re.search(r"\d+", output or "")
+    return int(match.group(0)) if match else None
+
+
+def scope_command_for_user(command: str, user_id: int | None) -> str:
+    """Injects ``--user <user_id>`` into a shell command that supports it.
+
+    ``settings``/``cmd``/``content`` take the flag right after the binary;
+    ``am`` takes it after its subcommand (``am start --user 10 ...``). Commands
+    that are not user-scopeable (or ``user_id=None``) run unchanged.
+    """
+    if user_id is None:
+        return command
+    tokens = command.split()
+    if not tokens or tokens[0] not in _USER_SCOPED_COMMANDS:
+        return command
+    insert_at = 1 if tokens[0] != "am" else min(2, len(tokens))
+    return " ".join([*tokens[:insert_at], "--user", str(int(user_id)), *tokens[insert_at:]])
+
+
+def _is_switch_restricted(output: str) -> bool:
+    lowered = (output or "").lower()
+    if "success" in lowered:
+        return False
+    return any(re.search(pattern, lowered) for pattern in _SWITCH_RESTRICTION_MARKERS)
+
 
 # KeyCode mapping from string name to Android keycode integer
 ANDROID_KEYCODE_MAP: dict[str, int] = {
@@ -382,9 +474,17 @@ class AndroidAdbDriver(BaseDeviceDriver):
             logger.error(f"Press key failed for '{key}': {e}")
             return False
 
-    async def launch_app(self, package_name: str) -> bool:
+    async def launch_app(self, package_name: str, user_id: int | None = None) -> bool:
         try:
-            cmd = f"monkey -p {package_name} -c android.intent.category.LAUNCHER 1"
+            if user_id is None:
+                cmd = f"monkey -p {package_name} -c android.intent.category.LAUNCHER 1"
+            else:
+                # monkey cannot target a profile; am start with a package-scoped
+                # MAIN/LAUNCHER intent resolves the launcher activity per user.
+                cmd = (
+                    f"am start --user {int(user_id)} -a android.intent.action.MAIN"
+                    f" -c android.intent.category.LAUNCHER -p {package_name}"
+                )
             await asyncio.to_thread(self.device.shell, cmd)
             return True
         except Exception as e:
@@ -426,14 +526,109 @@ class AndroidAdbDriver(BaseDeviceDriver):
             logger.debug(f"Error querying current package: {e}")
         return None
 
-    async def execute_shell(self, command: str, timeout_seconds: float = 15.0) -> str:
+    async def execute_shell(
+        self, command: str, timeout_seconds: float = 15.0, user_id: int | None = None
+    ) -> str:
         try:
+            scoped = scope_command_for_user(command, user_id)
             return await asyncio.wait_for(
-                asyncio.to_thread(self.device.shell, command),
+                asyncio.to_thread(self.device.shell, scoped),
                 timeout=timeout_seconds,
             )
         except Exception as e:
             return f"Error: {e}"
+
+    # --- Multi-user primitives --------------------------------------------------------
+
+    async def list_users(self) -> list[AndroidUserInfo]:
+        """Enumerates the device's user profiles (``pm list users``, dumpsys fallback).
+
+        ``is_current`` is filled from ``am get-current-user``; ``is_running``
+        comes from the listing itself. Raises ``RuntimeError`` when the device
+        reports no parseable user table.
+        """
+        output = await asyncio.wait_for(
+            asyncio.to_thread(self.device.shell, "pm list users"), timeout=15.0
+        )
+        entries = parse_user_list(str(output))
+        if not entries:
+            fallback = await asyncio.wait_for(
+                asyncio.to_thread(self.device.shell, "dumpsys user"), timeout=15.0
+            )
+            entries = parse_user_list(str(fallback))
+        if not entries:
+            raise RuntimeError(f"Could not parse the device user list from: {str(output)[:200]}")
+
+        try:
+            current = await self.get_current_user()
+        except Exception as exc:
+            logger.debug(f"Could not read the current user while listing users: {exc}")
+            current = None
+        users = [
+            AndroidUserInfo(
+                user_id=user_id,
+                name=name,
+                flags=flags,
+                is_running=is_running,
+                is_current=(current is not None and user_id == current),
+            )
+            for user_id, name, flags, is_running in entries
+        ]
+        logger.debug(
+            f"Android users on {self._device_id}: "
+            + ", ".join(f"{u.user_id}={u.name}{'*' if u.is_current else ''}" for u in users)
+        )
+        return users
+
+    async def get_current_user(self) -> int:
+        """The foreground Android user id (``am get-current-user``)."""
+        output = await asyncio.wait_for(
+            asyncio.to_thread(self.device.shell, "am get-current-user"), timeout=15.0
+        )
+        current = parse_current_user(str(output))
+        if current is None:
+            raise RuntimeError(f"Could not parse 'am get-current-user' output: {str(output)[:200]}")
+        return current
+
+    async def switch_user(self, user_id: int) -> bool:
+        """Switches the foreground Android user (``am switch-user``).
+
+        Returns ``True`` when the command was accepted. Raises
+        :class:`UserSwitchRestrictedError` when the firmware refuses the switch
+        (OEM restriction / SecurityException) and ``False`` on any other refusal.
+        """
+        output = await asyncio.wait_for(
+            asyncio.to_thread(self.device.shell, f"am switch-user {int(user_id)}"),
+            timeout=15.0,
+        )
+        text = str(output)
+        if _is_switch_restricted(text):
+            raise UserSwitchRestrictedError(text)
+        if re.search(r"^\s*error\b", text.strip(), flags=re.IGNORECASE) or "Error:" in text:
+            logger.warning(f"am switch-user {user_id} refused: {text.strip()[:200]}")
+            return False
+        return True
+
+    async def prepare_for_user_switch(self, user_id: int) -> bool:
+        """Restart screen-data clients for a newly foregrounded Android profile.
+
+        UiAutomation connections (uiautomator2's server) do not follow a user
+        switch: they keep serving the previous profile or die with it. Returns
+        ``True`` when the reset client also re-bound the accessibility helper
+        itself (the fallback client owns one), so the caller skips its own
+        helper re-attachment.
+        """
+        client = self._ui_adb_client
+        if client is None:
+            return False
+        if not hasattr(client, "handle_user_switch"):
+            return False
+        try:
+            client.handle_user_switch(user_id)
+        except Exception as exc:
+            logger.warning(f"Screen client restart across the user switch failed: {exc}")
+        # The fallback client re-binds its accessibility helper itself.
+        return hasattr(client, "helper")
 
     async def start_video_recording(self, output_dir: Path | None = None) -> None:
         """Starts screen recording via scrcpy in background."""

@@ -42,6 +42,7 @@ OPERATOR_ACTION_TO_CANONICAL: dict[str, str] = {
     "back": "press_key",
     "launch_app": "manage_app",
     "stop_app": "manage_app",
+    "manage_user": "manage_user",
     "open_link": "open_link",
     "wait_for_delay": "wait_for_delay",
 }
@@ -162,6 +163,27 @@ def to_canonical_call(
             "action": "launch" if verb == "launch_app" else "stop",
             "app_name": action_item.get("app_name", ""),
         }
+
+    if verb == "manage_user":
+        intent = str(action_item.get("intent", "")).lower()
+        if intent not in ("switch", "list", "current"):
+            raise ValueError(f"Unsupported manage_user action: {intent or '(missing)'}")
+        user_id = action_item.get("user_id")
+        if intent == "switch":
+            if isinstance(user_id, bool) or user_id is None:
+                raise ValueError("Invalid user_id")
+            try:
+                user_id = int(user_id)
+            except (TypeError, ValueError) as e:
+                raise ValueError("Invalid user_id") from e
+        elif user_id is not None and not isinstance(user_id, bool):
+            try:
+                user_id = int(user_id)
+            except (TypeError, ValueError):
+                user_id = None
+        else:
+            user_id = None
+        return "manage_user", {"action": intent, "user_id": user_id}
 
     if verb == "open_link":
         return "open_link", {"url": action_item.get("url", "")}

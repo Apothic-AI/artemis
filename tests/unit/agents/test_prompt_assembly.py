@@ -35,6 +35,7 @@ OPERATOR_DEVICE_TOOLS = (
     "swipe",
     "press_key",
     "manage_app",
+    "manage_user",
     "wait_for_delay",
     "long_press",
 )
@@ -131,10 +132,12 @@ def test_reduced_enums_stay_well_formed():
         available_tools=OPERATOR_PROMPT_TOOLSET - {"manage_app", "wait_for_delay"},
     )
     assert (
-        "Physical device actions (`click`, `input_text`, `swipe`, `press_key`, `long_press`)" in out
+        "Physical device actions (`click`, `input_text`, `swipe`, `press_key`,"
+        " `manage_user`, `long_press`)" in out
     )
     assert (
-        "Turn-Ending Action (`click`, `swipe`, `input_text`, `long_press`, or `press_key`)" in out
+        "Turn-Ending Action (`click`, `swipe`, `input_text`, `long_press`,"
+        " `press_key`, or `manage_user`)" in out
     )
 
 
@@ -144,11 +147,11 @@ def test_full_set_enum_slots_render_verbatim():
     out = apply_operator_prompt_contract(template)
     assert (
         "Physical device actions (`click`, `input_text`, `swipe`, `press_key`,"
-        " `manage_app`, `wait_for_delay`, `long_press`)" in out
+        " `manage_app`, `manage_user`, `wait_for_delay`, `long_press`)" in out
     )
     assert (
         "Turn-Ending Action (`click`, `swipe`, `input_text`, `long_press`,"
-        " `press_key`, `manage_app`, or `wait_for_delay`)" in out
+        " `press_key`, `manage_app`, `manage_user`, or `wait_for_delay`)" in out
     )
     assert "Helper/Subagent tools (`ask_explorer`, `ask_diagnoser`, `video_analyzer`)" in out
     assert "ADB/task tools (`run_adb_command`, `manage_task`)" in out

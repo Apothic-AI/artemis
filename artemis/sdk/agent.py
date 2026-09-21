@@ -988,8 +988,14 @@ class Agent:
         self._initialized = False
         logger.info("✅ Artemis agent stopped.")
 
-    async def _ensure_device_unlocked(self) -> None:
-        """Reject secure keyguard instead of allowing an agent to guess credentials."""
+    async def _ensure_device_unlocked(self, user_id: int = 0) -> None:
+        """Reject secure keyguard instead of allowing an agent to guess credentials.
+
+        ``user_id`` selects the per-user trust block: on multi-user devices the
+        target profile's lock state is what gates switching into it, and the
+        first block in the dump must not answer for a differently-locked
+        profile.
+        """
         if self._adb_client is None:
             raise AgentError("ADB client is not initialized.")
 
@@ -1000,13 +1006,19 @@ class Agent:
             logger.warning(f"Could not inspect Android keyguard state: {exc}")
             return
 
-        # The first deviceLocked value belongs to the current Android user;
-        # later entries may describe a separately locked work profile.
-        match = re.search(r"\bdeviceLocked=(?:true|1|false|0)\b", trust_state, re.IGNORECASE)
-        if match is None:
-            return
-        value = match.group(0).split("=", 1)[1].lower()
-        if value in {"true", "1"}:
+        from artemis.core.diagnostics.probes.adb_probe import parse_user_device_locked
+
+        # The block for this specific user; the fallback heuristics mirror the
+        # diagnostics probe's for older dump layouts without per-user blocks.
+        locked = parse_user_device_locked(trust_state, user_id)
+        if locked is None:
+            # The first deviceLocked value belongs to the current Android user;
+            # later entries may describe a separately locked work profile.
+            match = re.search(r"\bdeviceLocked=(?:true|1|false|0)\b", trust_state, re.IGNORECASE)
+            if match is None:
+                return
+            locked = match.group(0).split("=", 1)[1].lower() in {"true", "1"}
+        if locked:
             raise AgentError(
                 "Android secure keyguard is locked. Unlock the device manually before "
                 "running Artemis; automation will not guess a PIN, password, or pattern."

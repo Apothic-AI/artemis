@@ -105,7 +105,7 @@
     "type": "function",
     "function": {
       "name": "swipe",
-      "description": "[ACTION] Perform a swipe, drag, or slider-adjustment gesture on the screen.\n\n• Directional Scrolling ('direction'): Recommended for general browsing and standard page scrolling in most scenarios. Automatically computes safe swipe vectors and adaptive duration, retains a ~40% visual overlap anchor for zero-omission traversal, and prevents inertial flings. Supports scoping to a sub-container via 'target'. If it fails on certain custom layouts, fall back to specifying exact coordinates ('start' and 'end') directly.\n• Precise Coordinate Gestures ('start', 'end'): Best for local, fine-grained interactions such as adjusting sliders/SeekBars (e.g., volume, brightness, progress bars), drag-and-drop / list reordering, or as a reliable fallback when directional scrolling fails on specific containers. Always drag slightly PAST the target position to overcome touch slop and reliably trigger the update. When setting a slider to Maximum (100%) or Minimum (0%), swipe fully to the extreme boundary.\n\nArgs:\n    direction: Smart directional scrolling ('up', 'down', 'left', 'right'). Automatically computes safe swipe vectors, retaining 40% visual overlap: 'up' (reveal content below), 'down' (reveal content above), 'left', 'right'.\n    start: Start normalized coordinates [start_x, start_y] in 0-1000 scale.\n    end: End normalized coordinates [end_x, end_y] in 0-1000 scale.\n    target: Optional target element index (e.g. 2) or container bounds [left, top, right, bottom] to scope the directional swipe within.\n    gesture: Backward-compatible parameter: direction string OR custom coordinates list [start_x, start_y, end_x, end_y] in 0-1000 scale.\n    target_description: What is being dragged, in a few words (e.g. 'brightness slider knob'). REQUIRED for coordinate gestures ('start'/'end' or a coordinates list); ignored for directional scrolling.\n    duration: Optional gesture duration in milliseconds (default 800).",
+      "description": "[ACTION] Perform a swipe, drag, or slider-adjustment gesture on the screen.\n\n\u2022 Directional Scrolling ('direction'): Recommended for general browsing and standard page scrolling in most scenarios. Automatically computes safe swipe vectors and adaptive duration, retains a ~40% visual overlap anchor for zero-omission traversal, and prevents inertial flings. Supports scoping to a sub-container via 'target'. If it fails on certain custom layouts, fall back to specifying exact coordinates ('start' and 'end') directly.\n\u2022 Precise Coordinate Gestures ('start', 'end'): Best for local, fine-grained interactions such as adjusting sliders/SeekBars (e.g., volume, brightness, progress bars), drag-and-drop / list reordering, or as a reliable fallback when directional scrolling fails on specific containers. Always drag slightly PAST the target position to overcome touch slop and reliably trigger the update. When setting a slider to Maximum (100%) or Minimum (0%), swipe fully to the extreme boundary.\n\nArgs:\n    direction: Smart directional scrolling ('up', 'down', 'left', 'right'). Automatically computes safe swipe vectors, retaining 40% visual overlap: 'up' (reveal content below), 'down' (reveal content above), 'left', 'right'.\n    start: Start normalized coordinates [start_x, start_y] in 0-1000 scale.\n    end: End normalized coordinates [end_x, end_y] in 0-1000 scale.\n    target: Optional target element index (e.g. 2) or container bounds [left, top, right, bottom] to scope the directional swipe within.\n    gesture: Backward-compatible parameter: direction string OR custom coordinates list [start_x, start_y, end_x, end_y] in 0-1000 scale.\n    target_description: What is being dragged, in a few words (e.g. 'brightness slider knob'). REQUIRED for coordinate gestures ('start'/'end' or a coordinates list); ignored for directional scrolling.\n    duration: Optional gesture duration in milliseconds (default 800).",
       "parameters": {
         "properties": {
           "direction": {
@@ -283,11 +283,47 @@
       }
     }
   },
+  "manage_user": {
+    "type": "function",
+    "function": {
+      "name": "manage_user",
+      "description": "[ACTION] Switch between, list, or inspect Android user profiles on the device (multi-user devices only; a switch restarts the accessibility context into the target profile).",
+      "parameters": {
+        "properties": {
+          "action": {
+            "description": "The action type: 'switch' changes the foreground Android user profile, 'list' enumerates every profile, 'current' reports the active one.",
+            "enum": [
+              "switch",
+              "list",
+              "current"
+            ],
+            "type": "string"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Target Android user profile ID (e.g. 10). REQUIRED for action='switch'; ignored otherwise."
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      }
+    }
+  },
   "wait_for_delay": {
     "type": "function",
     "function": {
       "name": "wait_for_delay",
-      "description": "[ACTION] Pause execution and wait for a specified duration in milliseconds.\n\nUse this whenever you need time to elapse—whether for UI loading, animations,\nscreen transitions, or longer scheduled delays and intervals specified in the task.",
+      "description": "[ACTION] Pause execution and wait for a specified duration in milliseconds.\n\nUse this whenever you need time to elapse\u2014whether for UI loading, animations,\nscreen transitions, or longer scheduled delays and intervals specified in the task.",
       "parameters": {
         "properties": {
           "time_in_ms": {

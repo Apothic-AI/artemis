@@ -64,6 +64,61 @@ class ScreenData(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
+#: android.os.UserManager flags reported in ``UserInfo{<id>:<name>:<flags>}`` output.
+FLAG_PRIMARY = 0x0001
+FLAG_ADMIN = 0x0002
+FLAG_GUEST = 0x0004
+FLAG_RESTRICTED = 0x0008
+FLAG_MANAGED_PROFILE = 0x0020
+FLAG_FULL = 0x0040
+
+
+class AndroidUserInfo(BaseModel):
+    """One Android user profile as reported by ``pm list users`` / ``dumpsys user``."""
+
+    user_id: int
+    name: str
+    flags: int
+    is_running: bool = False
+    is_current: bool = False
+
+    @property
+    def is_guest(self) -> bool:
+        """A guest profile: ephemeral storage wiped on exit (FLAG_GUEST)."""
+        return bool(self.flags & FLAG_GUEST)
+
+    @property
+    def is_admin(self) -> bool:
+        """An admin (device-owner-capable) profile (FLAG_ADMIN or FLAG_PRIMARY)."""
+        return bool(self.flags & (FLAG_ADMIN | FLAG_PRIMARY))
+
+    @property
+    def is_managed_profile(self) -> bool:
+        """A managed work profile: runs concurrently, never switched into (FLAG_MANAGED_PROFILE)."""
+        return bool(self.flags & FLAG_MANAGED_PROFILE)
+
+    @property
+    def kind(self) -> str:
+        """Human-readable account class for user-facing user tables."""
+        if self.is_guest:
+            return "guest"
+        if self.is_managed_profile:
+            return "managed profile"
+        if self.is_admin:
+            return "admin"
+        return "secondary"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "user_id": self.user_id,
+            "name": self.name,
+            "flags": self.flags,
+            "kind": self.kind,
+            "is_running": self.is_running,
+            "is_current": self.is_current,
+        }
+
+
 class BaseDeviceDriver(ABC):
     """Abstract Base Class for mobile device and emulator drivers."""
 

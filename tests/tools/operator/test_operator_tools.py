@@ -27,6 +27,7 @@ async def test_operator_shell_tools():
         "swipe": {"gesture": "up"},
         "press_key": {"key": "ENTER"},
         "manage_app": {"action": "launch", "app_name": "Settings"},
+        "manage_user": {"action": "switch", "user_id": 10},
         "wait_for_delay": {"time_in_ms": 1000},
         "long_press": {"target": 1, "duration": 1000},
     }

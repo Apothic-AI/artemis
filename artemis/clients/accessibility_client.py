@@ -160,11 +160,13 @@ class AccessibilityClient:
         *,
         provision_on_connect: bool = True,
         request_timeout: float = 6.0,
+        user_id: int = 0,
     ) -> None:
         self._device_id = device_id
         self._manager = manager or helper_manager
         self._provision_on_connect = provision_on_connect
         self._request_timeout = request_timeout
+        self._user_id = user_id
         self._session: HelperSession | None = None
         self._awake_strategy: str | None = None
 
@@ -177,6 +179,11 @@ class AccessibilityClient:
         return self._device_id
 
     @property
+    def user_id(self) -> int:
+        """The Android profile this client's session is bound to."""
+        return self._user_id
+
+    @property
     def session(self) -> HelperSession | None:
         return self._session
 
@@ -184,23 +191,52 @@ class AccessibilityClient:
     def active_backend(self) -> str | None:
         return self.backend_name if self._session is not None else None
 
-    def connect(self, on_event: ProvisionEvent | None = None) -> None:
+    def connect(self, on_event: ProvisionEvent | None = None, user_id: int | None = None) -> None:
         """Task-path entry: provision (install / upgrade / enable) and attach.
 
         ``on_event`` receives ``installing`` / ``upgrading`` before the slow step.
+        ``user_id`` re-binds the session to that Android profile (accessibility
+        services run only in the foreground user's context); ``None`` keeps the
+        client's configured profile.
         """
+        if user_id is not None:
+            self._user_id = int(user_id)
         self._session = self._manager.attach(
-            self._device_id, provision=self._provision_on_connect, on_event=on_event
+            self._device_id,
+            provision=self._provision_on_connect,
+            on_event=on_event,
+            user_id=self._user_id,
         )
         if self._awake_strategy is None:
             self._awake_strategy = ensure_device_awake(self._device_id)
 
     def _ensure_session(self) -> HelperSession:
         """Observer-path entry: attach to a helper that is already running."""
-        if self._session is None:
-            self._session = self._manager.attach(self._device_id, provision=False)
-            if self._awake_strategy is None:
-                self._awake_strategy = ensure_device_awake(self._device_id)
+        if self._session is not None:
+            # The manager's registry is authoritative: a user switch elsewhere
+            # in this process (a manage_user switch) rebuilt the session for
+            # the now foreground profile, and a cached tunnel to the dead one
+            # is stale.
+            current = self._manager.session(self._device_id)
+            if current is not None and current is not self._session:
+                self._session = current
+            return self._session
+        self._session = self._manager.attach(
+            self._device_id, provision=False, user_id=self._user_id
+        )
+        if self._awake_strategy is None:
+            self._awake_strategy = ensure_device_awake(self._device_id)
+        return self._session
+
+    def switch_user(self, user_id: int) -> HelperSession:
+        """Rebind this client's session to a newly foregrounded Android profile.
+
+        The manager drops the previous user's tunnel (its accessibility service
+        was killed by the OS at the switch), provisions the service inside the
+        new user's context, and rebuilds the HTTP tunnel.
+        """
+        self._user_id = int(user_id)
+        self._session = self._manager.switch_session(self._device_id, self._user_id)
         return self._session
 
     def disconnect(self) -> None:
@@ -243,7 +279,7 @@ class AccessibilityClient:
                 f"Accessibility helper on {self._device_id} rejected the session token "
                 f"({body[:120]}); pushing it again."
             )
-            self._manager.push_token(self._device_id)
+            self._manager.push_token(self._device_id, self._user_id)
             try:
                 return self._http_once(session, path, payload, timeout)
             except urllib.error.HTTPError as again:
@@ -255,7 +291,7 @@ class AccessibilityClient:
                 f"Accessibility helper request {path} on {self._device_id} failed ({exc}); "
                 "rebuilding the tunnel once."
             )
-            self._session = self._manager.reattach(self._device_id)
+            self._session = self._manager.reattach(self._device_id, self._user_id)
             try:
                 return self._http_once(self._session, path, payload, timeout)
             except urllib.error.HTTPError as again:

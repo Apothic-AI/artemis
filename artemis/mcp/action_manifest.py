@@ -81,6 +81,7 @@ OPTIONAL_ACTIONS: frozenset[str] = frozenset(
         "swipe",
         "press_key",
         "manage_app",
+        "manage_user",
         "wait_for_delay",
         # The four below appear in no prompt at all. `wait_for_text` corroborates the
         # classification: the former legacy executor dispatched it, but it has never had
@@ -108,8 +109,9 @@ INTERNAL_ACTIONS: frozenset[str] = frozenset(
 #:
 #: ``run_adb_command`` and ``manage_app`` ride the *system channel* rather than physical
 #: actuation: a robot arm driving a handset still has ADB attached, so ``am start``
-#: suffices and no icon-hunting is required. (``manage_app`` is nonetheless classified
-#: as an optional device action above, since it is declared through the same path.)
+#: suffices and no icon-hunting is required. (``manage_app`` and ``manage_user`` are
+#: nonetheless classified as optional device actions above, since they are declared
+#: through the same path.)
 BACKEND_INDEPENDENT_TOOLS: frozenset[str] = frozenset(
     {
         "read_note",

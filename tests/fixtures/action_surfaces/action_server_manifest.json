@@ -38,7 +38,8 @@
             "DEVICE_ERROR",
             "PACKAGE_NOT_FOUND",
             "TIMEOUT",
-            "UNSUPPORTED"
+            "UNSUPPORTED",
+            "BLOCKED"
           ],
           "title": "ActionCode",
           "type": "string"
@@ -148,7 +149,8 @@
             "DEVICE_ERROR",
             "PACKAGE_NOT_FOUND",
             "TIMEOUT",
-            "UNSUPPORTED"
+            "UNSUPPORTED",
+            "BLOCKED"
           ],
           "title": "ActionCode",
           "type": "string"
@@ -255,7 +257,8 @@
             "DEVICE_ERROR",
             "PACKAGE_NOT_FOUND",
             "TIMEOUT",
-            "UNSUPPORTED"
+            "UNSUPPORTED",
+            "BLOCKED"
           ],
           "title": "ActionCode",
           "type": "string"
@@ -374,7 +377,8 @@
             "DEVICE_ERROR",
             "PACKAGE_NOT_FOUND",
             "TIMEOUT",
-            "UNSUPPORTED"
+            "UNSUPPORTED",
+            "BLOCKED"
           ],
           "title": "ActionCode",
           "type": "string"
@@ -489,7 +493,8 @@
             "DEVICE_ERROR",
             "PACKAGE_NOT_FOUND",
             "TIMEOUT",
-            "UNSUPPORTED"
+            "UNSUPPORTED",
+            "BLOCKED"
           ],
           "title": "ActionCode",
           "type": "string"
@@ -588,7 +593,8 @@
             "DEVICE_ERROR",
             "PACKAGE_NOT_FOUND",
             "TIMEOUT",
-            "UNSUPPORTED"
+            "UNSUPPORTED",
+            "BLOCKED"
           ],
           "title": "ActionCode",
           "type": "string"
@@ -692,7 +698,120 @@
             "DEVICE_ERROR",
             "PACKAGE_NOT_FOUND",
             "TIMEOUT",
-            "UNSUPPORTED"
+            "UNSUPPORTED",
+            "BLOCKED"
+          ],
+          "title": "ActionCode",
+          "type": "string"
+        }
+      },
+      "description": "Outcome of one device action, independent of any transport or agent.",
+      "properties": {
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "code": {
+          "$ref": "#/$defs/ActionCode"
+        },
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "normalized_coordinates": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Normalized Coordinates"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        }
+      },
+      "required": [
+        "ok",
+        "code",
+        "action",
+        "message"
+      ],
+      "title": "ActionResult",
+      "type": "object"
+    }
+  },
+  "manage_user": {
+    "description": "Switch to, list, or inspect Android device user profiles.",
+    "inputSchema": {
+      "properties": {
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Id"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "title": "manage_userArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "$defs": {
+        "ActionCode": {
+          "description": "Machine-readable outcome classification for a device action.",
+          "enum": [
+            "OK",
+            "INVALID_ARGS",
+            "TARGET_NOT_FOUND",
+            "DEVICE_ERROR",
+            "PACKAGE_NOT_FOUND",
+            "TIMEOUT",
+            "UNSUPPORTED",
+            "BLOCKED"
           ],
           "title": "ActionCode",
           "type": "string"
@@ -791,7 +910,8 @@
             "DEVICE_ERROR",
             "PACKAGE_NOT_FOUND",
             "TIMEOUT",
-            "UNSUPPORTED"
+            "UNSUPPORTED",
+            "BLOCKED"
           ],
           "title": "ActionCode",
           "type": "string"
@@ -900,7 +1020,8 @@
             "DEVICE_ERROR",
             "PACKAGE_NOT_FOUND",
             "TIMEOUT",
-            "UNSUPPORTED"
+            "UNSUPPORTED",
+            "BLOCKED"
           ],
           "title": "ActionCode",
           "type": "string"
@@ -999,7 +1120,8 @@
             "DEVICE_ERROR",
             "PACKAGE_NOT_FOUND",
             "TIMEOUT",
-            "UNSUPPORTED"
+            "UNSUPPORTED",
+            "BLOCKED"
           ],
           "title": "ActionCode",
           "type": "string"
@@ -1090,7 +1212,8 @@
             "DEVICE_ERROR",
             "PACKAGE_NOT_FOUND",
             "TIMEOUT",
-            "UNSUPPORTED"
+            "UNSUPPORTED",
+            "BLOCKED"
           ],
           "title": "ActionCode",
           "type": "string"
@@ -1192,7 +1315,8 @@
             "DEVICE_ERROR",
             "PACKAGE_NOT_FOUND",
             "TIMEOUT",
-            "UNSUPPORTED"
+            "UNSUPPORTED",
+            "BLOCKED"
           ],
           "title": "ActionCode",
           "type": "string"
@@ -1294,7 +1418,8 @@
             "DEVICE_ERROR",
             "PACKAGE_NOT_FOUND",
             "TIMEOUT",
-            "UNSUPPORTED"
+            "UNSUPPORTED",
+            "BLOCKED"
           ],
           "title": "ActionCode",
           "type": "string"

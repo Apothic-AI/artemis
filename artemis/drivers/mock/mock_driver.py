@@ -20,7 +20,13 @@ from pathlib import Path
 from typing import Any, Literal
 from PIL import Image
 
-from artemis.drivers.base import BaseDeviceDriver, KeyCode, ScreenData, SwipeDirection
+from artemis.drivers.base import (
+    BaseDeviceDriver,
+    KeyCode,
+    ScreenData,
+    SwipeDirection,
+    AndroidUserInfo,
+)
 
 
 class MockDeviceDriver(BaseDeviceDriver):
@@ -40,6 +46,10 @@ class MockDeviceDriver(BaseDeviceDriver):
         self.action_history: list[dict[str, Any]] = []
         self.connected = True
         self.recording = False
+        # Scripted multi-user state: (user_id, name, flags) rows; the current
+        # user id flips when `switch_user` runs.
+        self.users: list[tuple[int, str, int]] = [(0, "Owner", 0x0001)]
+        self._current_user = 0
 
         # Create blank 1x1 black image for minimal mock bytes
         img = Image.new("RGB", (width, height), color="black")
@@ -159,12 +169,13 @@ class MockDeviceDriver(BaseDeviceDriver):
         )
         return True
 
-    async def launch_app(self, package_name: str) -> bool:
+    async def launch_app(self, package_name: str, user_id: int | None = None) -> bool:
         self._current_package = package_name
         self.action_history.append(
             {
                 "action": "launch_app",
                 "package": package_name,
+                **({"user_id": user_id} if user_id is not None else {}),
             }
         )
         return True
@@ -181,14 +192,39 @@ class MockDeviceDriver(BaseDeviceDriver):
     async def get_current_package(self) -> str | None:
         return self._current_package
 
-    async def execute_shell(self, command: str, timeout_seconds: float = 15.0) -> str:
+    async def execute_shell(
+        self, command: str, timeout_seconds: float = 15.0, user_id: int | None = None
+    ) -> str:
         self.action_history.append(
             {
                 "action": "execute_shell",
                 "command": command,
+                **({"user_id": user_id} if user_id is not None else {}),
             }
         )
         return f"mock_output: {command}"
+
+    async def list_users(self) -> list[AndroidUserInfo]:
+        """The mock's scripted user table (``users`` attribute, mutated by ``switch_user``)."""
+        return [
+            AndroidUserInfo(
+                user_id=user_id,
+                name=name,
+                flags=flags,
+                is_running=(user_id == self._current_user),
+                is_current=(user_id == self._current_user),
+            )
+            for user_id, name, flags in self.users
+        ]
+
+    async def get_current_user(self) -> int:
+        self.action_history.append({"action": "get_current_user"})
+        return self._current_user
+
+    async def switch_user(self, user_id: int) -> bool:
+        self.action_history.append({"action": "switch_user", "user_id": user_id})
+        self._current_user = user_id
+        return True
 
     async def start_video_recording(self, output_dir: Path | None = None) -> None:
         self.recording = True

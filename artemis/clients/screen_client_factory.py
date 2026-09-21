@@ -281,6 +281,30 @@ class FallbackScreenClient:
                 self._uiautomator.disconnect(stop_server=True)
             self._active_backend = None
 
+    def handle_user_switch(self, user_id: int | None = None) -> None:
+        """Re-bind both backends to a newly foregrounded Android profile.
+
+        The helper session is rebuilt for the profile (Android killed the
+        previous user's accessibility service at the switch); a live
+        UIAutomator2 server is stopped and dropped so its UiAutomation
+        connection is re-created inside the new profile on the next call.
+        """
+        if user_id is not None:
+            try:
+                self._helper.switch_user(int(user_id))
+            except Exception as exc:
+                logger.warning(
+                    f"Accessibility helper re-attachment for user {user_id} on "
+                    f"{self._device_id} failed: {exc}"
+                )
+        if self._uiautomator is not None:
+            try:
+                self._uiautomator.handle_user_switch(user_id)
+            except Exception as exc:
+                logger.debug(f"UIAutomator2 restart across the user switch failed: {exc}")
+            self._uiautomator = None
+        self._active_backend = None
+
     # ------------------------------------------------------------------ #
     # Screen data and input, same surface as UIAutomatorClient
     # ------------------------------------------------------------------ #

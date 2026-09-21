@@ -38,6 +38,10 @@ class ActionCode(str, Enum):
     PACKAGE_NOT_FOUND = "PACKAGE_NOT_FOUND"
     TIMEOUT = "TIMEOUT"
     UNSUPPORTED = "UNSUPPORTED"
+    BLOCKED = "BLOCKED"
+    """A recoverable human pause: the device or its firmware refused the action
+    (locked keyguard, OEM-restricted user switching) and a person must finish
+    the step by hand before automation resumes."""
 
 
 class ActionResult(BaseModel):

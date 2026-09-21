@@ -221,6 +221,10 @@ async def _wire_manage_app(actuator: Any, a: dict[str, Any]) -> ActionResult:
     return await actuator.manage_app(a["action"], a["app_name"])
 
 
+async def _wire_manage_user(actuator: Any, a: dict[str, Any]) -> ActionResult:
+    return await actuator.manage_user(a["action"], a["user_id"])
+
+
 async def _wire_wait_for_delay(actuator: Any, a: dict[str, Any]) -> ActionResult:
     return await actuator.wait_for_delay(a["time_in_ms"])
 
@@ -612,6 +616,46 @@ _SPECS: tuple[ActionSpec, ...] = (
         ),
     ),
     ActionSpec(
+        name="manage_user",
+        operator=OperatorDialect(
+            description=(
+                "[ACTION] Switch between, list, or inspect Android user profiles on the"
+                " device (multi-user devices only; a switch restarts the accessibility"
+                " context into the target profile)."
+            ),
+            params=(
+                ParamSpec(
+                    "action",
+                    Literal["switch", "list", "current"],
+                    "The action type: 'switch' changes the foreground Android user"
+                    " profile, 'list' enumerates every profile, 'current' reports the"
+                    " active one.",
+                ),
+                ParamSpec(
+                    "user_id",
+                    int | None,
+                    "Target Android user profile ID (e.g. 10). REQUIRED for"
+                    " action='switch'; ignored otherwise.",
+                    required=False,
+                    default=None,
+                ),
+            ),
+        ),
+        wire=WireDialect(
+            description="Switch to, list, or inspect Android device user profiles.",
+            params=(
+                ParamSpec("action", str),
+                ParamSpec("user_id", int | None, required=False, default=None),
+            ),
+            bind=_wire_manage_user,
+        ),
+        differences=(
+            "action: the agent dialect is a closed enum (switch/list/current); the"
+            " wire takes the same words as a free string. user_id is recorded and"
+            " forwarded verbatim."
+        ),
+    ),
+    ActionSpec(
         name="wait_for_delay",
         operator=OperatorDialect(
             description=(
@@ -688,6 +732,7 @@ OPERATOR_SHELL_ORDER: tuple[str, ...] = (
     "swipe",
     "press_key",
     "manage_app",
+    "manage_user",
     "wait_for_delay",
     "long_press",
 )
@@ -701,6 +746,7 @@ EXCEPTION_PREFIXES: dict[str, str] = {
     "swipe": "Error during swipe",
     "press_key": "Error during press_key",
     "manage_app": "Error during manage_app",
+    "manage_user": "Error during manage_user",
     "wait_for_delay": "Error during wait_for_delay",
     "wait_for_text": "Error during wait_for_text",
 }

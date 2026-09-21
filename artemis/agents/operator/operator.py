@@ -1385,6 +1385,35 @@ class OperatorNode:
             action_str = "launch_app" if action == "launch" else "stop_app"
             return [{"action": action_str, "app_name": app_name}], None
 
+        elif tool_name == "manage_user":
+            user_action = args.get("action")
+            if user_action not in ["switch", "list", "current"]:
+                return (
+                    [],
+                    f"Error: Unsupported user management action '{user_action}'.",
+                )
+            item: dict[str, Any] = {"action": "manage_user", "intent": user_action}
+            if user_action == "switch":
+                user_id = args.get("user_id")
+                if isinstance(user_id, bool) or user_id is None:
+                    return (
+                        [],
+                        "Error: manage_user(action='switch') requires an integer 'user_id'.",
+                    )
+                try:
+                    item["user_id"] = int(user_id)
+                except (TypeError, ValueError):
+                    return (
+                        [],
+                        f"Error: 'user_id' must be an integer, got {user_id!r}.",
+                    )
+            elif args.get("user_id") is not None:
+                try:
+                    item["user_id"] = int(args.get("user_id"))
+                except (TypeError, ValueError):
+                    pass
+            return [item], None
+
         elif tool_name == "wait_for_delay":
             time_in_ms = args.get("time_in_ms")
             if time_in_ms is None:

@@ -85,6 +85,7 @@ def test_tool_declarations_match_fixture():
         "SWIPE_TOOL": "swipe",
         "PRESS_KEY_TOOL": "press_key",
         "MANAGE_APP_TOOL": "manage_app",
+        "MANAGE_USER_TOOL": "manage_user",
         "WAIT_FOR_DELAY_TOOL": "wait_for_delay",
     }
     assert set(expected) == set(by_constant)
@@ -125,6 +126,7 @@ def test_validator_declaration_order_is_stable():
         "read_note",
         "list_notes",
         "manage_app",
+        "manage_user",
         "wait_for_delay",
     ]
 

@@ -726,6 +726,11 @@ class FlashRunner:
                 last_execution_result["error"] = exec_result.text_summary
 
             extra_metadata: dict = {"token_usage": step_token_usage}
+            # The foreground Android profile the step executed within: history
+            # readers (checker, planner) see profile boundaries explicitly.
+            user_id = getattr(self.ctx.device, "current_user_id", None)
+            if user_id is not None:
+                extra_metadata["user_id"] = user_id
             if injected:
                 # Stamped verbatim on the step it reached: the chunk ledger
                 # keeps it as a never-evicted line at every compression level.

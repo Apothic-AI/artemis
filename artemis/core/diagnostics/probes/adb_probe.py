@@ -37,6 +37,47 @@ from artemis.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+#: Header of one per-user block in ``dumpsys trust``: the quoted token is the
+#: user id on most builds ("User \"0\":"), or a display name carrying the id in
+#: a ``(id=10)`` marker ("User \"Work\" (id=10):"); the current user's block may
+#: add "(current)". The block spans until the next header.
+_TRUST_USER_BLOCK_RE = re.compile(r'User\s+"(?P<label>[^"]*)"\s*(\((?P<marker>[^)]*)\))?\s*:')
+
+
+def parse_user_device_locked(trust_output: str, user_id: int = 0) -> bool | None:
+    """``deviceLocked`` from the ``User "<user_id>"`` block of ``dumpsys trust``.
+
+    Returns ``None`` when no block for ``user_id`` carries the field (an older
+    dump layout, or a profile Android never tracked): callers keep their
+    current-user heuristics then. Trust state is user-scoped, so the block
+    corresponding to the target profile is authoritative for a multi-user
+    switch decision; the first block in the dump must not answer for it.
+    """
+    block_user: int | None = None
+    for raw_line in (trust_output or "").splitlines():
+        header = _TRUST_USER_BLOCK_RE.search(raw_line)
+        if header:
+            marker = (header.group("marker") or "").lower()
+            id_marker = re.search(r"\bid\s*=\s*(\d+)", marker)
+            if id_marker:
+                block_user = int(id_marker.group(1))
+            else:
+                label = (header.group("label") or "").strip()
+                block_user = int(label) if label.isdigit() else None
+            # Some builds print the lock state on the header line itself
+            # ("User \"Work\" (id=10): deviceLocked=1").
+            searchable = raw_line[header.end() :]
+        else:
+            searchable = raw_line
+        if block_user != user_id:
+            continue
+        lock_match = re.search(
+            r"\bdeviceLocked\s*=\s*(true|false|1|0)\b", searchable, flags=re.IGNORECASE
+        )
+        if lock_match:
+            return lock_match.group(1).lower() in {"true", "1"}
+    return None
+
 
 class AdbDeviceProbe(BaseProbe):
     """Deep inspection probe for Android Debug Bridge, connected mobile devices, and local AVD emulators."""
@@ -133,13 +174,17 @@ class AdbDeviceProbe(BaseProbe):
         return "Installed"
 
     @staticmethod
-    def _parse_device_lock_state(policy_output: str, trust_output: str) -> bool | None:
+    def _parse_device_lock_state(
+        policy_output: str, trust_output: str, user_id: int = 0
+    ) -> bool | None:
         """Parse Android Keyguard state from dumpsys output.
 
         ``KeyguardServiceDelegate.showing`` also catches swipe-only lock screens,
-        while Trust's current-user ``deviceLocked`` covers secure locks and
-        screen-off transitions. Any positive signal wins so an occluded lock
-        screen cannot accidentally be treated as ready.
+        while Trust's ``deviceLocked`` covers secure locks and screen-off
+        transitions. Any positive signal wins so an occluded lock screen cannot
+        accidentally be treated as ready. ``user_id`` selects the per-user trust
+        block (multi-user devices keep one per profile); the current-user and
+        any-block heuristics only apply when that block has no answer.
         """
         policy_showing: bool | None = None
         policy_lines = policy_output.splitlines()
@@ -166,23 +211,25 @@ class AdbDeviceProbe(BaseProbe):
         )
         legacy_states = [value.lower() in {"true", "1"} for value in legacy_matches]
 
-        trust_match = re.search(
-            r"^.*\(current\).*?\bdeviceLocked\s*=\s*(true|false|1|0)\b",
-            trust_output,
-            flags=re.IGNORECASE | re.MULTILINE,
-        )
-        if trust_match is None:
+        user_locked = parse_user_device_locked(trust_output, user_id)
+        if user_locked is None:
             trust_match = re.search(
-                r"\bdeviceLocked\s*=\s*(true|false|1|0)\b",
+                r"^.*\(current\).*?\bdeviceLocked\s*=\s*(true|false|1|0)\b",
                 trust_output,
-                flags=re.IGNORECASE,
+                flags=re.IGNORECASE | re.MULTILINE,
             )
-        trust_locked = trust_match.group(1).lower() in {"true", "1"} if trust_match else None
+            if trust_match is None:
+                trust_match = re.search(
+                    r"\bdeviceLocked\s*=\s*(true|false|1|0)\b",
+                    trust_output,
+                    flags=re.IGNORECASE,
+                )
+            user_locked = trust_match.group(1).lower() in {"true", "1"} if trust_match else None
 
         # Prefer the modern, current-user signals. Legacy fields can coexist in
         # dumpsys output as stale or display-specific diagnostics and must not
         # override an explicit modern unlocked result.
-        modern_states = [state for state in [policy_showing, trust_locked] if state is not None]
+        modern_states = [state for state in [policy_showing, user_locked] if state is not None]
         if any(modern_states):
             return True
         if modern_states:
@@ -198,6 +245,7 @@ class AdbDeviceProbe(BaseProbe):
         adb_path: str,
         serial: str,
         timeout_seconds: float = 2.0,
+        user_id: int = 0,
     ) -> bool | None:
         """Query Keyguard state without changing or waking the target device."""
 
@@ -227,7 +275,7 @@ class AdbDeviceProbe(BaseProbe):
                 run_dumpsys("window", "policy"),
                 run_dumpsys("trust"),
             )
-            return self._parse_device_lock_state(policy_output, trust_output)
+            return self._parse_device_lock_state(policy_output, trust_output, user_id)
         except Exception as exc:
             logger.debug(f"Failed to query lock state for {serial}: {exc}")
             return None

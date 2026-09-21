@@ -101,13 +101,21 @@ async def ensure_focus_at_coords(controller, x: int, y: int) -> str | None:
 class AdbActuator:
     """Drives an Android device through ``UnifiedMobileController`` over ADB."""
 
+    #: Bounds of the settle poll after ``am switch-user`` and of the wait for a
+    #: human to perform a firmware-blocked switch by hand (see ``manage_user``).
+    SWITCH_SETTLE_TIMEOUT_SECONDS = 15.0
+    MANUAL_SWITCH_CONFIRM_TIMEOUT_SECONDS = 45.0
+    SWITCH_POLL_INTERVAL_SECONDS = 1.0
+
     def __init__(
         self,
         ctx: ArtemisContext,
         controller: UnifiedMobileController | None = None,
+        helper_manager: Any | None = None,
     ):
         self.ctx = ctx
         self.controller = controller or UnifiedMobileController(ctx)
+        self.helper_manager = helper_manager
 
     # --- Contract --------------------------------------------------------------------
 
@@ -330,6 +338,279 @@ class AdbActuator:
             f"Invalid manage_app action: {action}",
             code=ActionCode.INVALID_ARGS,
         )
+
+    async def manage_user(self, action: str, user_id: int | None = None) -> ActionResult:
+        """Switch, list, or inspect Android user profiles (multi-user devices).
+
+        ``list`` formats every profile with its id, name, account class and
+        running state; ``current`` reports the foreground profile; ``switch``
+        validates the target (exists, not a managed work profile), gates on the
+        target profile's secure keyguard, executes ``am switch-user`` and polls
+        until the foreground user matches, then re-attaches the accessibility
+        helper inside the new profile and synchronizes ``DeviceContext``.
+        """
+        action_l = str(action or "").lower()
+        if action_l == "list":
+            return await self._list_users()
+        if action_l == "current":
+            return await self._current_user()
+        if action_l == "switch":
+            return await self._switch_user(user_id)
+        return ActionResult.failure(
+            "manage_user",
+            f"Invalid manage_user action: {action}",
+            code=ActionCode.INVALID_ARGS,
+        )
+
+    async def _list_users(self) -> ActionResult:
+        driver = self.controller.driver
+        try:
+            users = await driver.list_users()
+        except Exception as e:
+            return ActionResult.failure(
+                "manage_user", f"Error listing device users: {e}", detail=repr(e)
+            )
+        if not users:
+            return ActionResult.failure(
+                "manage_user", "The device reports no Android user profiles."
+            )
+        rows = []
+        for u in users:
+            markers = []
+            if u.is_current:
+                markers.append("current")
+            elif u.is_running:
+                markers.append("running")
+            rows.append(
+                f"ID {u.user_id} '{u.name or '?'}' ({u.kind}){self._markers_suffix(markers)}"
+            )
+        return ActionResult.success(
+            "manage_user",
+            f"Device user profiles: {'; '.join(rows)}.",
+        )
+
+    async def _current_user(self) -> ActionResult:
+        driver = self.controller.driver
+        try:
+            current_id = await driver.get_current_user()
+        except Exception as e:
+            return ActionResult.failure(
+                "manage_user", f"Error reading the current device user: {e}", detail=repr(e)
+            )
+        info = None
+        try:
+            info = next(u for u in await driver.list_users() if u.user_id == current_id)
+        except Exception as exc:
+            logger.debug(f"Profile metadata lookup for user {current_id} failed: {exc}")
+        if info is not None:
+            message = f"Current device user: profile '{info.name or '?'}' (ID {info.user_id}, {info.kind})."
+        else:
+            message = f"Current device user: ID {current_id}."
+        return ActionResult.success("manage_user", message)
+
+    async def _switch_user(self, user_id: int | None) -> ActionResult:
+        if user_id is None:
+            return ActionResult.failure(
+                "manage_user",
+                "manage_user(action='switch') requires a target 'user_id'.",
+                code=ActionCode.INVALID_ARGS,
+            )
+        user_id = int(user_id)
+        driver = self.controller.driver
+
+        try:
+            current_id = await driver.get_current_user()
+        except Exception as e:
+            return ActionResult.failure(
+                "manage_user", f"Error reading the current device user: {e}", detail=repr(e)
+            )
+
+        info = None
+        current_info = None
+        users: list[Any] = []
+        try:
+            users = await driver.list_users()
+            info = next((u for u in users if u.user_id == user_id), None)
+            current_info = next((u for u in users if u.user_id == current_id), None)
+        except Exception as exc:
+            logger.debug(f"User enumeration during switch to {user_id} failed: {exc}")
+
+        if current_id == user_id:
+            # Already the foreground profile: either a no-op call or a human
+            # completed a manual switch after a BLOCKED pause. Skip the command
+            # and re-attach the helper for this profile.
+            return await self._finish_switch(user_id, info)
+
+        if info is None:
+            known = ", ".join(str(u.user_id) for u in users) if users else "unknown"
+            return ActionResult.failure(
+                "manage_user",
+                f"The device has no user profile with ID {user_id} (known profiles: {known}).",
+                code=ActionCode.TARGET_NOT_FOUND,
+            )
+        if info.is_managed_profile:
+            return ActionResult.failure(
+                "manage_user",
+                f"User {user_id} is a managed work profile. Work profiles run concurrently"
+                " beside their parent profile and cannot be switched into; drive it from"
+                " its parent or through the work-profile toggle instead.",
+                code=ActionCode.INVALID_ARGS,
+            )
+
+        # Keyguard gate: a credential-locked target profile would present its
+        # lock screen after the switch, and automation never guesses PINs.
+        try:
+            locked = await self._target_user_locked(user_id)
+        except Exception as exc:
+            logger.debug(f"Keyguard probe for user {user_id} failed: {exc}")
+            locked = None
+        if locked is True:
+            return ActionResult.failure(
+                "manage_user",
+                f"Target user {user_id} is locked with secure credentials. Unlock manually.",
+                code=ActionCode.BLOCKED,
+            )
+
+        notes: list[str] = []
+        if info.is_guest or (current_info is not None and current_info.is_guest):
+            notes.append(
+                "Note: a guest profile was involved in this switch; guest storage is"
+                " ephemeral and is wiped when the guest session ends."
+            )
+
+        from artemis.drivers.android.adb_driver import UserSwitchRestrictedError
+
+        try:
+            accepted = await driver.switch_user(user_id)
+        except UserSwitchRestrictedError as exc:
+            # OEM firmware refused the automated switch: request a manual
+            # profile switch on the device screen and poll a bounded window
+            # for the human to complete it; a later retry short-circuits on
+            # "already current" once they are done.
+            confirmed = await self._wait_current_user(
+                user_id, self.MANUAL_SWITCH_CONFIRM_TIMEOUT_SECONDS
+            )
+            if not confirmed:
+                return ActionResult.failure(
+                    "manage_user",
+                    "Firmware restricted automated user switching. Please switch to "
+                    f"User {user_id} manually on the device to continue.",
+                    code=ActionCode.BLOCKED,
+                    detail=str(exc),
+                )
+            notes.append("The profile switch was performed manually on the device screen.")
+        except Exception as e:
+            return ActionResult.failure(
+                "manage_user", f"Error switching device user: {e}", detail=repr(e)
+            )
+        else:
+            if not accepted:
+                return ActionResult.failure(
+                    "manage_user",
+                    f"The device refused switching to user {user_id}.",
+                )
+            if not await self._wait_current_user(user_id, self.SWITCH_SETTLE_TIMEOUT_SECONDS):
+                return ActionResult.failure(
+                    "manage_user",
+                    f"Timed out waiting for the device to switch to user {user_id}.",
+                    code=ActionCode.TIMEOUT,
+                )
+
+        return await self._finish_switch(user_id, info, notes=notes)
+
+    # --- manage_user helpers ----------------------------------------------------------
+
+    @staticmethod
+    def _markers_suffix(markers: list[str]) -> str:
+        return f" [{', '.join(markers)}]" if markers else ""
+
+    def _helper(self) -> Any:
+        """The configured helper manager, or the process-wide default."""
+        if self.helper_manager is not None:
+            return self.helper_manager
+        from artemis.runtime.helper_manager import helper_manager
+
+        return helper_manager
+
+    async def _target_user_locked(self, user_id: int) -> bool | None:
+        """Trust-state lock flag of the target profile (``None`` when unknown)."""
+        from artemis.core.diagnostics.probes.adb_probe import parse_user_device_locked
+
+        output = await self.controller.driver.execute_shell("dumpsys trust")
+        return parse_user_device_locked(str(output), user_id)
+
+    async def _wait_current_user(self, user_id: int, timeout_seconds: float) -> bool:
+        """Bounded poll until the foreground user matches ``user_id``."""
+        deadline = time.monotonic() + max(0.0, timeout_seconds)
+        while True:
+            try:
+                if await self.controller.driver.get_current_user() == user_id:
+                    return True
+            except Exception as exc:
+                logger.debug(f"'am get-current-user' poll failed: {exc}")
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(self.SWITCH_POLL_INTERVAL_SECONDS)
+
+    async def _finish_switch(
+        self,
+        user_id: int,
+        info: Any = None,
+        notes: list[str] | None = None,
+    ) -> ActionResult:
+        """Helper re-attachment and context synchronization after a confirmed switch.
+
+        The previous profile's accessibility service died at the switch, so the
+        helper session is rebuilt (provisioning included) for the new profile
+        and the hierarchy dump is verified. The switch itself already happened:
+        a failed re-attachment is reported as a diagnostic note, never a failed
+        action.
+        """
+        notes = list(notes or [])
+        if info is not None and info.is_guest:
+            notes.append(
+                "Note: the active profile is a guest account; its storage is ephemeral"
+                " and is wiped when the guest session ends."
+            )
+
+        serial = getattr(self.ctx.device, "device_id", None) or getattr(
+            self.controller.driver, "device_id", None
+        )
+        if serial:
+            handled = False
+            prepare = getattr(self.controller.driver, "prepare_for_user_switch", None)
+            if prepare is not None:
+                try:
+                    # Resets fallback UiAutomation clients; the fallback client
+                    # also re-binds its own accessibility helper when it owns one.
+                    handled = await prepare(user_id)
+                except Exception as exc:
+                    logger.debug(f"Screen client restart across the user switch failed: {exc}")
+            if not handled:
+                try:
+                    await asyncio.to_thread(self._helper().switch_session, serial, user_id)
+                except Exception as exc:
+                    notes.append(f"Accessibility helper re-attachment failed: {exc}")
+            # Verify the re-attached backend actually dumps the new profile's UI.
+            try:
+                elements = await self.controller.get_ui_elements()
+                if not elements:
+                    notes.append("The screen hierarchy dump came back empty after the switch.")
+            except Exception as exc:
+                notes.append(f"Screen hierarchy verification after the switch failed: {exc}")
+
+        try:
+            self.ctx.device.current_user_id = user_id
+        except Exception as exc:
+            logger.debug(f"Could not stamp current_user_id on the device context: {exc}")
+
+        if info is not None:
+            message = f"Switched device user to profile '{info.name or '?'}' (ID {info.user_id})."
+        else:
+            message = f"Switched device user to ID {user_id}."
+        if notes:
+            message += " " + " ".join(notes)
+        return ActionResult.success("manage_user", message)
 
     async def wait_for_delay(self, time_in_ms: int) -> ActionResult:
         delay_s = max(0.0, float(time_in_ms) / 1000.0)

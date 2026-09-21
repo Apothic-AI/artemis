@@ -87,6 +87,7 @@ _TURN_ENDING_ORDER = (
     "long_press",
     "press_key",
     "manage_app",
+    "manage_user",
     "wait_for_delay",
 )
 

@@ -37,7 +37,8 @@ TOKEN = "a" * 48
 
 class FakeManager:
     def __init__(self):
-        self.session = self._session(41000)
+        self.current_session = self._session(41000)
+        self.user_id = 0
         self.attach_calls: list[bool] = []
         self.reattach_calls = 0
         self.pushed_tokens = 0
@@ -57,20 +58,32 @@ class FakeManager:
             protocol_version=2,
         )
 
-    def attach(self, serial, *, provision=True, on_event=None):
+    # Mirrors the real manager's registry access (the client re-syncs its
+    # cached session from here).
+    def session(self, serial):
+        return self.current_session
+
+    def attach(self, serial, *, provision=True, on_event=None, user_id=0):
+        self.user_id = user_id
         self.attach_calls.append(provision)
         if on_event is not None:
             on_event("installing", {"serial": serial})
-        return self.session
+        return self.current_session
 
-    def reattach(self, serial):
+    def reattach(self, serial, user_id=0):
         self.reattach_calls += 1
+        self.user_id = user_id
         if self.fail_reattach:
             raise HelperUnavailable("dead")
-        self.session = self._session(41001)
-        return self.session
+        self.current_session = self._session(41001)
+        return self.current_session
 
-    def push_token(self, serial):
+    def switch_session(self, serial, user_id):
+        self.current_session = self._session(41002)
+        self.current_session.user_id = user_id
+        return self.current_session
+
+    def push_token(self, serial, user_id=None):
         self.pushed_tokens += 1
         return True
 

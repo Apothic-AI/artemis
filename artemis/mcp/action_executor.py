@@ -194,6 +194,8 @@ class McpActionExecutor:
                 else:
                     res = await session.call(wire_name, wire_args)
                     message = finalize(res) if finalize else res.message
+                if raw_name == "manage_user" and res.ok:
+                    self._sync_user_state(args, state)
 
                 if res.ok or self._observe_despite_failure(raw_name, res):
                     obs = await session.observe(settle_ms=400)
@@ -261,6 +263,27 @@ class McpActionExecutor:
         if raw_name == "wait_for_text":
             return res.code is ActionCode.TIMEOUT
         return False
+
+    @staticmethod
+    def _sync_user_state(args: dict[str, Any], state: Any) -> None:
+        """Stamps a successful user switch onto the graph State.
+
+        The actuator already stamped the authoritative ``DeviceContext``; the
+        State mirror is what the Checker and the planner read. A state without
+        the field (older runs) silently skips.
+        """
+        if str(args.get("action", "")).lower() != "switch":
+            return
+        user_id = args.get("user_id")
+        if isinstance(user_id, bool) or not isinstance(user_id, int):
+            try:
+                user_id = int(user_id)
+            except (TypeError, ValueError):
+                return
+        try:
+            state.current_user_id = user_id
+        except (AttributeError, TypeError, ValueError) as exc:
+            logger.debug(f"Could not stamp current_user_id on the graph state: {exc}")
 
     # --- Argument translation --------------------------------------------------------
 
@@ -363,6 +386,27 @@ class McpActionExecutor:
                 {
                     "action": args.get("action", "launch"),
                     "app_name": args.get("app_name", ""),
+                },
+                None,
+                {},
+            )
+
+        if raw_name == "manage_user":
+            user_id = args.get("user_id")
+            if isinstance(user_id, str) and user_id.strip().lstrip("-").isdigit():
+                user_id = int(user_id)
+            elif isinstance(user_id, float) and not isinstance(user_id, bool):
+                user_id = int(user_id)
+            elif user_id is not None and not isinstance(user_id, int):
+                raise _ArgError(
+                    "Error during manage_user: 'user_id' must be an integer profile ID"
+                    f" (got {user_id!r})."
+                )
+            return (
+                "manage_user",
+                {
+                    "action": args.get("action", ""),
+                    "user_id": user_id,
                 },
                 None,
                 {},

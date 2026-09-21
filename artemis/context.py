@@ -85,6 +85,11 @@ class DeviceContext(BaseModel):
     device_width: int = 1080
     device_height: int = 2400
 
+    current_user_id: int = 0
+    """Foreground Android user profile id (multi-user devices). Every per-user
+    surface (secure settings, accessibility sessions, broadcasts) is scoped to
+    it; the actuator stamps it after each confirmed user switch."""
+
     def to_str(self):
         return (
             f"Host platform: {self.host_platform}\n"
@@ -92,6 +97,7 @@ class DeviceContext(BaseModel):
             f"Device ID: {self.device_id}\n"
             f"Device width: {self.device_width}\n"
             f"Device height: {self.device_height}\n"
+            f"Current Android user ID: {self.current_user_id}\n"
         )
 
 

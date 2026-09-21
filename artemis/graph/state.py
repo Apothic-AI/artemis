@@ -144,6 +144,11 @@ class State(BaseModel):
         "True if operator exceeded tool call limit in the previous turn",
         take_last,
     ] = None
+    current_user_id: Annotated[
+        int,
+        "Active Android user profile ID",
+        take_last,
+    ] = 0
 
     @classmethod
     def initial(cls, goal: str) -> "State":
