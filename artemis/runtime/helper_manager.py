@@ -773,6 +773,10 @@ class AccessibilityHelperManager:
                     )
                     result = self._adb(serial, "install", "-r", "-g", str(bundled.apk_path))
                     output = f"{result.stdout or ''}\n{result.stderr or ''}"
+                    if result.returncode != 0 and "Unknown option: -g" in output:
+                        # Older Android releases (SDK < 23) do not support the -g runtime-permission grant flag
+                        result = self._adb(serial, "install", "-r", str(bundled.apk_path))
+                        output = f"{result.stdout or ''}\n{result.stderr or ''}"
                     if result.returncode != 0 or "Success" not in output:
                         return ProvisionResult(
                             ok=False,

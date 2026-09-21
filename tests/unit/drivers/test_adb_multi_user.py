@@ -67,9 +67,9 @@ def _set_device(d: AndroidAdbDriver, device: FakeShellDevice) -> None:
 def test_parse_user_list_reads_ids_names_flags_and_running():
     users = parse_user_list(_PM_LIST_USERS)
     assert users == [
-        (0, "Owner", 13, True),
-        (10, "Test User", 110, False),
-        (11, "Guest", 14, True),
+        (0, "Owner", 0x13, True),
+        (10, "Test User", 0x110, False),
+        (11, "Guest", 0x14, True),
     ]
 
 

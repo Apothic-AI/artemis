@@ -41,7 +41,7 @@ logger = get_logger(__name__)
 #: user id on most builds ("User \"0\":"), or a display name carrying the id in
 #: a ``(id=10)`` marker ("User \"Work\" (id=10):"); the current user's block may
 #: add "(current)". The block spans until the next header.
-_TRUST_USER_BLOCK_RE = re.compile(r'User\s+"(?P<label>[^"]*)"\s*(\((?P<marker>[^)]*)\))?\s*:')
+_TRUST_USER_BLOCK_RE = re.compile(r'User\s+"(?P<label>[^"]*)"(?P<marker>(?:\s*\([^)]*\))*)\s*:')
 
 
 def parse_user_device_locked(trust_output: str, user_id: int = 0) -> bool | None:

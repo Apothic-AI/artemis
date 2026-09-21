@@ -56,7 +56,7 @@ _SWITCH_RESTRICTION_MARKERS = (
     "switching users? (is )?not (supported|allowed|permitted)",
 )
 
-_USER_INFO_RE = r"UserInfo\{(\d+):(.*):(\d+)\}"
+_USER_INFO_RE = r"UserInfo\{(\d+):(.*):([0-9a-fA-F]+)\}"
 
 
 class UserSwitchRestrictedError(RuntimeError):
@@ -90,7 +90,7 @@ def parse_user_list(output: str) -> list[tuple[int, str, int, bool]]:
             (
                 int(match.group(1)),
                 match.group(2).strip(),
-                int(match.group(3)),
+                int(match.group(3), 16),
                 "running" in trailing,
             )
         )

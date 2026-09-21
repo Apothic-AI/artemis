@@ -580,24 +580,38 @@ class AdbActuator:
             handled = False
             prepare = getattr(self.controller.driver, "prepare_for_user_switch", None)
             if prepare is not None:
-                try:
-                    # Resets fallback UiAutomation clients; the fallback client
-                    # also re-binds its own accessibility helper when it owns one.
-                    handled = await prepare(user_id)
-                except Exception as exc:
-                    logger.debug(f"Screen client restart across the user switch failed: {exc}")
+                for attempt in range(3):
+                    try:
+                        # Resets fallback UiAutomation clients; the fallback client
+                        # also re-binds its own accessibility helper when it owns one.
+                        handled = await prepare(user_id)
+                        break
+                    except Exception as exc:
+                        if attempt == 2:
+                            logger.debug(f"Screen client restart across the user switch failed: {exc}")
+                        await asyncio.sleep(1.0)
             if not handled:
-                try:
-                    await asyncio.to_thread(self._helper().switch_session, serial, user_id)
-                except Exception as exc:
-                    notes.append(f"Accessibility helper re-attachment failed: {exc}")
+                for attempt in range(3):
+                    try:
+                        await asyncio.to_thread(self._helper().switch_session, serial, user_id)
+                        break
+                    except Exception as exc:
+                        if attempt == 2:
+                            notes.append(f"Accessibility helper re-attachment failed: {exc}")
+                        await asyncio.sleep(1.0)
             # Verify the re-attached backend actually dumps the new profile's UI.
-            try:
-                elements = await self.controller.get_ui_elements()
-                if not elements:
-                    notes.append("The screen hierarchy dump came back empty after the switch.")
-            except Exception as exc:
-                notes.append(f"Screen hierarchy verification after the switch failed: {exc}")
+            for attempt in range(3):
+                try:
+                    elements = await self.controller.get_ui_elements()
+                    if elements:
+                        break
+                    if attempt == 2:
+                        notes.append("The screen hierarchy dump came back empty after the switch.")
+                    await asyncio.sleep(1.0)
+                except Exception as exc:
+                    if attempt == 2:
+                        notes.append(f"Screen hierarchy verification after the switch failed: {exc}")
+                    await asyncio.sleep(1.0)
 
         try:
             self.ctx.device.current_user_id = user_id

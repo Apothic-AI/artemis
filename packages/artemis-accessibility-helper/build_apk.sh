@@ -139,7 +139,7 @@ echo "-> Linking APK..."
 "$AAPT2" link \
     -I "$PLATFORM/android.jar" \
     --manifest app/src/main/AndroidManifest.xml \
-    --min-sdk-version 24 \
+    --min-sdk-version 21 \
     --target-sdk-version 35 \
     --version-code "$VERSION_CODE" \
     --version-name "$VERSION_NAME" \
@@ -161,7 +161,7 @@ CLASS_FILES="$(find build/obj -name "*.class")"
 "$D8" \
     --lib "$PLATFORM/android.jar" \
     --output build/apk/ \
-    --min-api 24 \
+    --min-api 21 \
     $CLASS_FILES
 
 echo "-> Packaging DEX..."
