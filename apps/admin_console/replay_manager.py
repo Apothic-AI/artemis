@@ -158,7 +158,7 @@ class ReplayManager:
         from adbutils import AdbClient
 
         try:
-            from artemis.clients.ui_automator_client import UIAutomatorClient
+            from third_party.mobile_use.clients.ui_automator_client import UIAutomatorClient
         except ImportError:
             raise ImportError(
                 "Failed to import UIAutomatorClient. Ensure artemis package is installed in path."

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 import json
 import logging
 import os
@@ -43,7 +42,7 @@ from artemis.clients.screen_client_factory import create_screen_client
 from artemis.context import ArtemisContext, DeviceContext, DevicePlatform
 from artemis.controllers.unified_controller import UnifiedMobileController
 from artemis.platform import platform
-from artemis.utils.app_launch_utils import launch_app_with_retries
+from third_party.mobile_use.utils.app_launch_utils import launch_app_with_retries
 
 
 def configure_stdio_mode() -> None:
@@ -184,7 +183,6 @@ def _get_controller(device_serial: str | None = None):
 # single implementation in artemis.mcp.actuators.adb.
 from artemis.mcp.actuators.adb import (  # noqa: E402  pylint: disable=wrong-import-position
     ensure_focus_at_coords as _ensure_focus_at_coords,
-    find_element_at_coords as _find_element_at_coords,
 )
 
 

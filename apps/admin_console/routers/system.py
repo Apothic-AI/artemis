@@ -376,7 +376,7 @@ async def get_model_config_and_env():
     import os
     from artemis.config.paths import get_config_path, get_env_file
     from artemis.config import settings
-    from artemis.utils.file import load_jsonc
+    from third_party.mobile_use.utils.file import load_jsonc
 
     from artemis.config.settings import is_placeholder_key
 

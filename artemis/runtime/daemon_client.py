@@ -28,7 +28,7 @@ import urllib.error
 import urllib.request
 
 from artemis.config.paths import ROOT_DIR
-from artemis.utils.logger import get_logger
+from third_party.mobile_use.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
