@@ -513,10 +513,13 @@ async def render_timeline_clip(
                 f"setsar=1,fps={fps},format=yuv420p[{label}]"
             )
         labels.append(f"[{label}]")
+    # ``concat`` does not advertise a frame rate on its output link, so without an
+    # explicit rate ffmpeg falls back to 25 fps CFR and duplicates frames, breaking
+    # the ``start_time + frame_index / fps`` mapping the analyzer relies on.
     if len(labels) == 1:
-        filter_parts.append(f"{labels[0]}null[outv]")
+        filter_parts.append(f"{labels[0]}fps={fps}[outv]")
     else:
-        filter_parts.append(f"{''.join(labels)}concat=n={len(labels)}:v=1:a=0[outv]")
+        filter_parts.append(f"{''.join(labels)}concat=n={len(labels)}:v=1:a=0,fps={fps}[outv]")
 
     command.extend(
         [
